@@ -1,0 +1,299 @@
+package com.lynk.qiaoyu;
+
+import it.sauronsoftware.ftp4j.FTPClient;
+import it.sauronsoftware.ftp4j.FTPDataTransferListener;
+
+import java.awt.EventQueue;
+
+import javax.swing.JFrame;
+import javax.swing.JPanel;
+import javax.swing.border.EmptyBorder;
+import java.awt.Toolkit;
+import javax.swing.JLabel;
+import java.awt.Font;
+import javax.swing.SwingConstants;
+import java.awt.Color;
+import java.beans.PropertyChangeEvent;
+import java.beans.PropertyChangeListener;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.List;
+
+import javax.swing.GroupLayout;
+import javax.swing.GroupLayout.Alignment;
+import javax.swing.JDialog;
+import javax.swing.LayoutStyle.ComponentPlacement;
+import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.JProgressBar;
+import javax.swing.SwingWorker;
+import javax.swing.UIManager;
+
+public class AutoUpdate extends JFrame {
+	private static final long serialVersionUID = 1L;
+	
+	private long totalSize;
+	private String ftpName;
+	private int ftpPort;
+	private String ftpUser;
+	private String ftpPwd;
+	private String ftpPath;
+	private String ftpUpdateTxtName;
+	private String localUpdateTxtFullPath;
+	private String ftpUpdateJarName;
+	private String localUpdateJarFullPath;
+	
+	private JPanel contentPane;
+	private JTextArea uiUpdateMessage;
+	private JProgressBar uiProcess;
+
+	public static void main(final String[] args) {
+		EventQueue.invokeLater(new Runnable() {
+			public void run() {
+				try {
+					JFrame.setDefaultLookAndFeelDecorated(true);
+					JDialog.setDefaultLookAndFeelDecorated(true);
+					UIManager.setLookAndFeel("com.sun.java.swing.plaf.windows.WindowsLookAndFeel");
+					Font font = new Font("微软雅黑", Font.PLAIN, 12);
+					UIManager.put("OptionPane.messageFont", font);
+					AutoUpdate frame = new AutoUpdate(args);
+					frame.setLocationRelativeTo(null);
+					frame.setVisible(true);
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+		});
+	}
+	
+	public AutoUpdate(String[] args) {
+		String localVer = args[0];
+		String serverVer = args[1];
+		initComponents(localVer, serverVer);
+		
+		totalSize = Long.parseLong(args[2]);
+		ftpName = args[3];
+		ftpPort = Integer.parseInt(args[4]);
+		ftpUser = args[5];
+		ftpPwd = args[6];
+		ftpPath = args[7];
+		ftpUpdateTxtName = args[8];
+		localUpdateTxtFullPath = args[9];
+		ftpUpdateJarName = args[10];
+		localUpdateJarFullPath = args[11];
+		updateFiles();
+	}
+	
+	/**
+	 * 下载更新
+	 */
+	private void updateFiles() {
+		setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
+		Update update = new Update();
+		update.addPropertyChangeListener(new PropertyChangeListener() {
+			
+			@Override
+			public void propertyChange(PropertyChangeEvent evt) {
+				if("progress".equals(evt.getPropertyName())) {
+					uiProcess.setValue((int) evt.getNewValue());
+				}
+			}
+		});
+		update.execute();
+	}
+	
+	class Update extends SwingWorker<String, String> {
+		
+		@Override
+		protected String doInBackground() throws Exception {
+			FTPClient client = new FTPClient();
+			
+			File txtFile = new File(localUpdateTxtFullPath);
+			if(txtFile.exists()) {
+				txtFile.delete();
+			}
+			
+			File jarFile = new File(localUpdateJarFullPath);
+			File backJarFile = new File(localUpdateJarFullPath + "_bak");
+			if(jarFile.exists()) {
+				jarFile.renameTo(backJarFile);
+				jarFile.delete();
+			}
+			
+			try {
+				client.connect(ftpName, ftpPort);
+				client.login(ftpUser, ftpPwd);
+				if(ftpPath != null && ftpPath.length() > 0) {
+					client.changeDirectory(ftpPath);
+				}
+				client.setType(FTPClient.TYPE_BINARY);
+				//先下载更新日志
+				client.download(ftpUpdateTxtName, txtFile);
+				
+				//显示日志
+				File updateFile = new File(System.getProperty("user.dir"), "更新日志.txt");
+				if(updateFile.exists() && updateFile.isFile()) {
+					InputStream is = null;
+					InputStreamReader in = null;
+					BufferedReader reader = null;
+					try {
+						is = new FileInputStream(updateFile);
+						in = new InputStreamReader(is, "GBK");
+						reader = new BufferedReader(in);
+						String lineText = null;
+						while ((lineText = reader.readLine()) != null) {
+							publish(lineText);
+						}
+					} catch (Exception e) {
+						throw e;
+					} finally {
+						try {
+							if(reader != null) {
+								reader.close();
+							}
+							if(in != null) {
+								in.close();
+							}
+							if(is != null) {
+								is.close();
+							}
+						} catch (Exception e) {
+							throw e;
+						}
+					}
+				}
+				
+				//再下载更新文件
+				client.download(ftpUpdateJarName, jarFile, new FTPDataTransferListener() {
+					
+					@Override
+					public void transferred(int length) {
+						setProgress((int) (length * 100 / totalSize));
+					}
+					@Override
+					public void started() {
+					}
+					@Override
+					public void failed() {
+					}
+					@Override
+					public void completed() {
+						setProgress(100);
+					}
+					@Override
+					public void aborted() {
+					}
+				});
+			} catch (Exception e) {
+				if(jarFile.exists()) {
+					jarFile.delete();
+				}
+				if(backJarFile.exists()) {
+					backJarFile.renameTo(jarFile);
+				}
+				
+				throw e;
+			} finally {
+				client.disconnect(true);
+				if(backJarFile.exists()) {
+					backJarFile.delete();
+				}
+			}
+			return null;
+		}
+		
+
+		@Override
+		protected void process(List<String> chunks) {
+			for(String chunk: chunks) {
+				uiUpdateMessage.append(chunk);
+				uiUpdateMessage.append("\n");
+			}
+		}
+
+
+		@Override
+		protected void done() {
+			try {
+				get();
+				JOptionPane.showMessageDialog(AutoUpdate.this, "升级成功!", "自动更新", JOptionPane.INFORMATION_MESSAGE);
+			} catch (Exception e) {
+				JOptionPane.showMessageDialog(AutoUpdate.this, e.getMessage(), "自动更新", JOptionPane.ERROR_MESSAGE);
+			} finally {
+				setDefaultCloseOperation(EXIT_ON_CLOSE);
+			}
+		}
+	}
+	
+	private void initComponents(String localVer, String serverVer) {
+		setAlwaysOnTop(true);
+		setTitle("自动更新");
+		setDefaultCloseOperation(EXIT_ON_CLOSE);
+		setIconImage(Toolkit.getDefaultToolkit().getImage(AutoUpdate.class.getResource("/resources/images/icon.png")));
+		setBounds(100, 100, 654, 541);
+		contentPane = new JPanel();
+		contentPane.setBorder(new EmptyBorder(5, 5, 5, 5));
+		setContentPane(contentPane);
+		
+		JPanel panel = new JPanel();
+		panel.setLayout(null);
+		
+		JLabel label = new JLabel("本地版本:");
+		label.setBounds(10, 10, 105, 25);
+		panel.add(label);
+		label.setHorizontalAlignment(SwingConstants.RIGHT);
+		label.setFont(new Font("方正姚体", Font.PLAIN, 17));
+		
+		JLabel uiLocalVer = new JLabel(localVer);
+		uiLocalVer.setBounds(125, 10, 60, 25);
+		panel.add(uiLocalVer);
+		uiLocalVer.setForeground(Color.BLUE);
+		uiLocalVer.setHorizontalAlignment(SwingConstants.LEFT);
+		uiLocalVer.setFont(new Font("方正姚体", Font.PLAIN, 17));
+		
+		JLabel label_1 = new JLabel("服务器版本:");
+		label_1.setBounds(346, 10, 105, 25);
+		panel.add(label_1);
+		label_1.setHorizontalAlignment(SwingConstants.RIGHT);
+		label_1.setFont(new Font("方正姚体", Font.PLAIN, 17));
+		
+		JLabel uiServerVer = new JLabel(serverVer);
+		uiServerVer.setBounds(461, 10, 60, 25);
+		panel.add(uiServerVer);
+		uiServerVer.setHorizontalAlignment(SwingConstants.LEFT);
+		uiServerVer.setForeground(Color.RED);
+		uiServerVer.setFont(new Font("方正姚体", Font.PLAIN, 17));
+		
+		JScrollPane scrollPane = new JScrollPane();
+		
+		uiProcess = new JProgressBar();
+		uiProcess.setMaximum(100);
+		uiProcess.setFont(new Font("微软雅黑", Font.PLAIN, 12));
+		GroupLayout gl_contentPane = new GroupLayout(contentPane);
+		gl_contentPane.setHorizontalGroup(
+			gl_contentPane.createParallelGroup(Alignment.TRAILING)
+				.addComponent(panel, GroupLayout.DEFAULT_SIZE, 636, Short.MAX_VALUE)
+				.addComponent(scrollPane, GroupLayout.DEFAULT_SIZE, 636, Short.MAX_VALUE)
+				.addComponent(uiProcess, Alignment.LEADING, GroupLayout.DEFAULT_SIZE, 636, Short.MAX_VALUE)
+		);
+		gl_contentPane.setVerticalGroup(
+			gl_contentPane.createParallelGroup(Alignment.LEADING)
+				.addGroup(gl_contentPane.createSequentialGroup()
+					.addComponent(panel, GroupLayout.PREFERRED_SIZE, 48, GroupLayout.PREFERRED_SIZE)
+					.addPreferredGap(ComponentPlacement.RELATED)
+					.addComponent(scrollPane, GroupLayout.DEFAULT_SIZE, 412, Short.MAX_VALUE)
+					.addPreferredGap(ComponentPlacement.RELATED)
+					.addComponent(uiProcess, GroupLayout.PREFERRED_SIZE, 25, GroupLayout.PREFERRED_SIZE))
+		);
+		
+		uiUpdateMessage = new JTextArea();
+		uiUpdateMessage.setEditable(false);
+		uiUpdateMessage.setFont(new Font("微软雅黑", Font.PLAIN, 14));
+		scrollPane.setViewportView(uiUpdateMessage);
+		contentPane.setLayout(gl_contentPane);
+	}
+}
